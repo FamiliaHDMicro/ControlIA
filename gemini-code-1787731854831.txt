@@ -1,0 +1,244 @@
+#Requires -RunAsAdministrator
+#Requires -Version 5.1
+
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# ==============================================================================
+# XAML INTERFACE GRAFICA
+# ==============================================================================
+[xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Otimizador Unificado v2.1" Height="680" Width="950"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanMinimize" Background="#0F172A">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#2563EB"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,5,0,5"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,15">
+            <TextBlock Text="Otimizador Unificado - Windows" Foreground="#F8FAFC" FontSize="22" FontWeight="Bold"/>
+            <TextBlock Text="Central de Otimização, Desinstalação Segura e Diagnóstico" Foreground="#94A3B8" FontSize="13" Margin="0,3,0,0"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Margin="0,0,15,0">
+                <StackPanel>
+                    <Border Background="#1E293B" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="🚀 LIMPEZA &amp; PERFORMANCE" Foreground="#38BDF8" FontWeight="Bold" FontSize="13" Margin="0,0,0,8"/>
+                            <Button Name="BtnLimpeza" Content="🧹 Limpeza Profunda de Disco" Background="#3B82F6"/>
+                            <Button Name="BtnModoTurbo" Content="⚡ Ativar Plano Modo Turbo" Background="#10B981"/>
+                            <Button Name="BtnDNS" Content="🌐 Limpar Cache DNS &amp; Redes" Background="#0284C7"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#1E293B" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="📦 DESINSTALAÇÃO &amp; SISTEMA" Foreground="#F39C12" FontWeight="Bold" FontSize="13" Margin="0,0,0,8"/>
+                            <Button Name="BtnDesinstalar" Content="🗑️ Desinstalador Seguro de Apps" Background="#D97706"/>
+                            <Button Name="BtnReparar" Content="🛠️ Reparar Sistema (SFC / DISM)" Background="#8B5CF6"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#1E293B" CornerRadius="8" Padding="12">
+                        <StackPanel>
+                            <TextBlock Text="🔍 DIAGNÓSTICO" Foreground="#EC4899" FontWeight="Bold" FontSize="13" Margin="0,0,0,8"/>
+                            <Button Name="BtnHardware" Content="📊 Informações do Hardware" Background="#64748B"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border Grid.Column="1" Background="#020617" CornerRadius="8" BorderBrush="#334155" BorderThickness="1">
+                <Grid Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Terminal / Log de Execução:" Foreground="#64748B" FontSize="11" Margin="0,0,0,5"/>
+                    <TextBox Name="TxtLog" Grid.Row="1" Background="Transparent" Foreground="#4ADE80" FontFamily="Consolas" FontSize="12" 
+                             AcceptsReturn="True" TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto" BorderThickness="0"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <StatusBar Grid.Row="2" Background="Transparent" Margin="0,10,0,0">
+            <StatusBarItem>
+                <TextBlock Name="TxtStatus" Text="Status: Pronto" Foreground="#94A3B8" FontSize="12"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
+"@
+
+$reader = (New-Object System.Xml.XmlNodeReader $xaml)
+$window = [Windows.Markup.XamlReader]::Load($reader)
+
+$BtnLimpeza     = $window.FindName("BtnLimpeza")
+$BtnModoTurbo   = $window.FindName("BtnModoTurbo")
+$BtnDNS         = $window.FindName("BtnDNS")
+$BtnDesinstalar = $window.FindName("BtnDesinstalar")
+$BtnReparar     = $window.FindName("BtnReparar")
+$BtnHardware    = $window.FindName("BtnHardware")
+$TxtLog         = $window.FindName("TxtLog")
+$TxtStatus      = $window.FindName("TxtStatus")
+
+function Write-Log {
+    param([string]$message)
+    $timestamp = Get-Date -Format "HH:mm:ss"
+    $window.Dispatcher.Invoke([Action]{
+        $TxtLog.AppendText("[$timestamp] $message`r`n")
+        $TxtLog.ScrollToEnd()
+    })
+}
+
+function Set-Status {
+    param([string]$status)
+    $window.Dispatcher.Invoke([Action]{
+        $TxtStatus.Text = "Status: $status"
+    })
+}
+
+# --- LÓGICA DE EXECUÇÃO ---
+
+$BtnLimpeza.Add_Click({
+    Set-Status "Executando limpeza..."
+    Write-Log "Iniciando limpeza de temporários..."
+    
+    $tempFolders = @($env:TEMP, "C:\Windows\Temp", "C:\Windows\SoftwareDistribution\Download")
+    foreach ($folder in $tempFolders) {
+        if (Test-Path $folder) {
+            Get-ChildItem -Path $folder -Recurse -Force -ErrorAction SilentlyContinue | 
+                Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+        }
+    }
+    Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+    Write-Log "Limpeza concluída com sucesso!"
+    Set-Status "Pronto"
+})
+
+$BtnModoTurbo.Add_Click({
+    Set-Status "Ativando Modo Turbo..."
+    try {
+        powercfg -setactive e9a42b02-d5df-448d-aa00-03f14749eb61 | Out-Null
+        Write-Log "Plano 'Desempenho Máximo' ativado."
+    } catch {
+        powercfg -setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c | Out-Null
+        Write-Log "Plano 'Alto Desempenho' ativado."
+    }
+    Set-Status "Pronto"
+})
+
+$BtnDNS.Add_Click({
+    Set-Status "Limpando cache de rede..."
+    ipconfig /flushdns | Out-Null
+    Write-Log "Cache DNS limpo."
+    Set-Status "Pronto"
+})
+
+# Desinstalador Seguro sem Invoke-Expression
+$BtnDesinstalar.Add_Click({
+    Set-Status "Carregando Desinstalador..."
+    
+    $paths = @(
+        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    $apps = Get-ItemProperty $paths -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -and $_.SystemComponent -ne 1 -and $_.UninstallString } |
+        Select-Object DisplayName, UninstallString | Sort-Object DisplayName
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Desinstalador Seguro"
+    $form.Size = New-Object System.Drawing.Size(600, 500)
+    $form.StartPosition = "CenterScreen"
+
+    $listBox = New-Object System.Windows.Forms.CheckedListBox
+    $listBox.Location = New-Object System.Drawing.Point(20, 20)
+    $listBox.Size = New-Object System.Drawing.Size(540, 380)
+    $listBox.CheckOnClick = $true
+    foreach ($app in $apps) { [void]$listBox.Items.Add($app.DisplayName) }
+    $form.Controls.Add($listBox)
+
+    $btnRun = New-Object System.Windows.Forms.Button
+    $btnRun.Text = "Remover Selecionados"
+    $btnRun.Location = New-Object System.Drawing.Point(380, 415)
+    $btnRun.Size = New-Object System.Drawing.Size(180, 35)
+    $btnRun.Add_Click({
+        foreach ($nome in $listBox.CheckedItems) {
+            $alvo = $apps | Where-Object { $_.DisplayName -eq $nome } | Select-Object -First 1
+            if ($alvo) {
+                Write-Log "Iniciando remoção: $nome"
+                $cmd = $alvo.UninstallString
+                if ($cmd -match '^"([^"]+)"(.*)$') {
+                    Start-Process -FilePath $Matches[1] -ArgumentList "$($Matches[2]) /quiet" -Wait -NoNewWindow
+                } else {
+                    $parts = $cmd -split ' ', 2
+                    Start-Process -FilePath $parts[0] -ArgumentList $parts[1] -Wait -NoNewWindow
+                }
+            }
+        }
+        $form.Close()
+    })
+    $form.Controls.Add($btnRun)
+    $form.ShowDialog() | Out-Null
+    Set-Status "Pronto"
+})
+
+$BtnReparar.Add_Click({
+    Set-Status "Reparando Sistema (SFC/DISM)..."
+    Write-Log "Iniciando verificação de integridade..."
+    Start-Job -ScriptBlock {
+        sfc /scannow
+        Dism /Online /Cleanup-Image /RestoreHealth
+    } | Out-Null
+    Write-Log "Verificação em segundo plano iniciada."
+    Set-Status "Pronto"
+})
+
+$BtnHardware.Add_Click({
+    $os = Get-CimInstance Win32_OperatingSystem
+    $cpu = Get-CimInstance Win32_Processor
+    $ram = Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum
+    
+    Write-Log "Sistema Operacional: $($os.Caption)"
+    Write-Log "Processador: $($cpu.Name)"
+    Write-Log "Memória RAM Total: $([math]::round($ram.Sum / 1GB, 2)) GB"
+})
+
+Write-Log "Otimizador Unificado iniciado."
+$window.ShowDialog() | Out-Null
