@@ -1,7 +1,9 @@
 using System;
 using System.Diagnostics;
 using System.Management;
+using System.Net.Http;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace ControlIA.Core
 {
@@ -14,27 +16,12 @@ namespace ControlIA.Core
         public string GerarRelatorioCompleto()
         {
             StringBuilder sb = new StringBuilder();
-
             sb.AppendLine("=== Relatório de Saúde e Diagnóstico - ControlIA ===");
             sb.AppendLine($"Data do Diagnóstico: {DateTime.Now}");
+            sb.AppendLine($"Chipset Detectado: {ObterChipsetPlacaMae()}");
             sb.AppendLine();
 
-            sb.AppendLine("== Especificações do Hardware ==");
-            sb.AppendLine($"Sistema Operacional: {GetOSInfo()}");
-            sb.AppendLine($"Processador: {GetProcessorInfo()}");
-            sb.AppendLine($"Memória Total: {GetTotalMemory()} MB");
-            sb.AppendLine();
-
-            sb.AppendLine("== Telemetria do Sistema ==");
-            CpuAtual = GetCpuUsage();
-            MemDisponivelMb = GetAvailableMemory();
-            sb.AppendLine($"Uso Atual da CPU: {CpuAtual:F1} %");
-            sb.AppendLine($"Memória Livre: {MemDisponivelMb} MB");
-            sb.AppendLine();
-
-            sb.AppendLine("== Saúde dos Discos e S.M.A.R.T. ==");
             VerificarSmart(sb);
-
             return sb.ToString();
         }
 
@@ -54,93 +41,63 @@ namespace ControlIA.Core
                         if (status != "OK")
                         {
                             SaudeDiscoCritica = true;
-                            sb.AppendLine("  └─> [RISCO CRÍTICO] Sinais iminentes de falha física detectados!");
+                            sb.AppendLine("  └─> [RISCO CRÍTICO] Falha física iminente!");
                         }
                     }
                 }
             }
             catch
             {
-                sb.AppendLine("Não foi possível acessar a telemetria S.M.A.R.T. dos discos.");
+                sb.AppendLine("Acesso S.M.A.R.T. indisponível.");
             }
         }
 
-        private string GetOSInfo()
+        public string ObterChipsetPlacaMae()
         {
             try
             {
-                using (var searcher = new ManagementObjectSearcher("SELECT Caption FROM Win32_OperatingSystem"))
+                using (var searcher = new ManagementObjectSearcher("SELECT Product FROM Win32_BaseBoard"))
                 {
-                    foreach (var os in searcher.Get())
-                        return os["Caption"]?.ToString() ?? "Desconhecido";
+                    foreach (ManagementObject obj in searcher.Get())
+                        return obj["Product"]?.ToString() ?? "Chipset Genérico";
                 }
             }
             catch { }
-            return "Desconhecido";
+            return "Chipset Genérico";
         }
 
-        private string GetProcessorInfo()
+        public string ObterTipoInterfaceDisco()
         {
             try
             {
-                using (var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_Processor"))
+                using (var searcher = new ManagementObjectSearcher("SELECT Model, InterfaceType FROM Win32_DiskDrive"))
                 {
-                    foreach (var proc in searcher.Get())
-                        return proc["Name"]?.ToString() ?? "Desconhecido";
-                }
-            }
-            catch { }
-            return "Desconhecido";
-        }
-
-        private string GetTotalMemory()
-        {
-            try
-            {
-                using (var searcher = new ManagementObjectSearcher("SELECT TotalVisibleMemorySize FROM Win32_OperatingSystem"))
-                {
-                    foreach (var mem in searcher.Get())
+                    foreach (ManagementObject obj in searcher.Get())
                     {
-                        ulong kb = (ulong)mem["TotalVisibleMemorySize"];
-                        return (kb / 1024).ToString();
+                        string model = obj["Model"]?.ToString().ToUpper() ?? "";
+                        if (model.Contains("NVME")) return "M.2 NVMe PCIe";
+                        if (model.Contains("SSD")) return "SATA III SSD";
+                        return obj["InterfaceType"]?.ToString() ?? "SATA";
                     }
                 }
             }
             catch { }
-            return "Desconhecido";
+            return "SATA III";
         }
 
-        private double GetAvailableMemory()
+        public static async Task BuscarPecasCompativeisAsync(string chipset, string interfaceDisco)
         {
             try
             {
-                using (var searcher = new ManagementObjectSearcher("SELECT FreePhysicalMemory FROM Win32_OperatingSystem"))
+                using (HttpClient client = new HttpClient())
                 {
-                    foreach (var mem in searcher.Get())
-                    {
-                        ulong kb = (ulong)mem["FreePhysicalMemory"];
-                        return kb / 1024;
-                    }
+                    string url = $"https://control-ia.hdmicro-ml.workers.dev/api/buscar-pecas?chipset={Uri.EscapeDataString(chipset)}&interface={Uri.EscapeDataString(interfaceDisco)}";
+                    await client.GetAsync(url);
                 }
             }
-            catch { }
-            return 0;
-        }
-
-        private double GetCpuUsage()
-        {
-            try
+            catch (Exception ex)
             {
-                using (var cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total"))
-                {
-                    cpuCounter.NextValue();
-                    System.Threading.Thread.Sleep(200);
-                    return cpuCounter.NextValue();
-                }
-            }
-            catch
-            {
-                return 0;
+                Console.WriteLine($"Erro na consulta de peças: {ex.Message}");
             }
         }
     }
