@@ -9,22 +9,41 @@ namespace ControlIA.Core
         {
             chave = chave?.Trim().ToUpper();
 
-            // Valida o formato básico antes de chamar a rede
-            if (!UserSettings.ValidarChaveLicenca(chave))
+            // Valida o formato básico antes de chamar a rede (evita requisições inúteis)
+            if (string.IsNullOrEmpty(chave) || !UserSettings.ValidarChaveLicenca(chave))
             {
                 return false;
             }
 
-            // Tenta validar na nuvem via API do ControlIA Cloud
-            bool validaOnline = await ControlIACloudClient.ValidarLicencaOnlineAsync(chave);
-
-            if (validaOnline || UserSettings.ValidarChaveLicenca(chave))
+            try
             {
-                UserSettings.LicenseKey = chave;
-                return true;
-            }
+                // Tenta validar rigorosamente na nuvem via API do ControlIA Cloud
+                bool validaOnline = await ControlIACloudClient.ValidarLicencaOnlineAsync(chave);
 
-            return false;
+                if (validaOnline)
+                {
+                    UserSettings.LicenseKey = chave;
+                    return true;
+                }
+                
+                // Se o servidor respondeu explicitamente que é inválida, rejeita na hora
+                return false;
+            }
+            catch (Exception)
+            {
+                // Fallback seguro em caso de queda de internet: 
+                // Apenas permite se houver uma chave offline validada por criptografia local (ex: arquivo assinado)
+                // Evite liberar acesso irrestrito se a rede cair.
+                bool tokenOfflineValido = UserSettings.ValidarAssinaturaOffline(chave);
+                
+                if (tokenOfflineValido)
+                {
+                    UserSettings.LicenseKey = chave;
+                    return true;
+                }
+
+                return false;
+            }
         }
     }
 }
