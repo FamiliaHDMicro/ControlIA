@@ -1,107 +1,135 @@
 using System;
 using System.IO;
-using System.Speech.Synthesis;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Threading;
-using Microsoft.Win32;
 using ControlIA.Core;
+using Microsoft.Win32;
 
-namespace ControlIA.UI
+namespace NexusAdminTool
 {
     public partial class ModuloRelatorio : Window
     {
-        private readonly HardwareDiagnostic _diagnostic;
-        private string _relatorioTexto;
-        private DispatcherTimer _timerRemocao;
-        private int _segundosRestantes = 30;
+        private readonly HardwareDiagnostic _diagnostic = new HardwareDiagnostic();
+        private string _relatorioTexto = string.Empty;
+        private bool _fechando;
 
         public ModuloRelatorio()
         {
             InitializeComponent();
-            _diagnostic = new HardwareDiagnostic();
-            _ = InicializarRelatorioAsync();
+            _ = CarregarAsync();
         }
 
-        private async Task InicializarRelatorioAsync()
+        private async Task CarregarAsync()
         {
-            _relatorioTexto = await Task.Run(() => _diagnostic.GerarRelatorioCompleto());
-            txtRelatorio.Text = _relatorioTexto;
+            txtRelatorio.Text = "Estou sentindo as minhas peças... aguarde alguns segundos.";
 
-            using (SpeechSynthesizer synth = new SpeechSynthesizer())
+            try
             {
-                synth.SpeakAsync("Diagnóstico do ControlIA concluído com sucesso. Aguarde a liberação do pendrive.");
+                string texto = await Task.Run(() => _diagnostic.GerarRelatorioCompleto());
+                if (_fechando)
+                    return;
+
+                _relatorioTexto = texto;
+                txtRelatorio.Text = texto;
             }
-
-            if (_diagnostic.SaudeDiscoCritica)
+            catch (Exception ex)
             {
-                string chipset = _diagnostic.ObterChipsetPlacaMae();
-                string tipoInterface = _diagnostic.ObterTipoInterfaceDisco();
-                
-                _ = HardwareDiagnostic.BuscarPecasCompativeisAsync(chipset, tipoInterface);
+                if (_fechando)
+                    return;
 
+                txtRelatorio.Text = "Não consegui concluir a leitura das minhas peças:\n" + ex.Message;
+            }
+        }
+
+        private async void btnEnviarCloud_Click(object sender, RoutedEventArgs e)
+        {
+            SinaisVitais? sinais = _diagnostic.UltimosSinais;
+            if (sinais == null)
+            {
                 MessageBox.Show(
-                    $"ALERTA DA IA: Detectada degradação física no armazenamento.\n" +
-                    $"Compatibilidade para Chipset [{chipset}]: {tipoInterface}.\n" +
-                    $"Buscando substitutos com melhores preços na nuvem...",
-                    "Autodefesa ControlIA", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    "Aguarde a leitura terminar antes de enviar.",
+                    "ControlIA", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
             }
 
-            IniciarContagemRemocaoPendrive();
+            MessageBoxResult confirmacao = MessageBox.Show(
+                "Serão enviados ao servidor ControlIA somente: uso de CPU, memória livre e espaço livre no disco. Nada além disso. Deseja enviar?",
+                "Confirmar envio", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (confirmacao != MessageBoxResult.Yes)
+                return;
+
+            btnEnviarCloud.IsEnabled = false;
+            try
+            {
+                var payload = new TelemetryPayload
+                {
+                    Tipo = "relatorio_saude",
+                    TimestampUtc = DateTime.UtcNow,
+                    CpuPercentual = sinais.CpuUsoPercent ?? 0,
+                    MemoriaDisponivelMb = (sinais.MemoriaLivreGb ?? 0) * 1024,
+                    DiscoLivreGb = sinais.DiscoSistemaLivreGb ?? 0
+                };
+
+                bool enviado = await ControlIACloudClient.EnviarTelemetriaAsync(payload);
+                MessageBox.Show(
+                    enviado
+                        ? "Enviado com sucesso."
+                        : "Não consegui enviar agora. Os dados continuam somente nesta máquina.",
+                    "ControlIA", MessageBoxButton.OK,
+                    enviado ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            }
+            finally
+            {
+                if (!_fechando)
+                    btnEnviarCloud.IsEnabled = true;
+            }
         }
 
-        private void IniciarContagemRemocaoPendrive()
+        private void btnExportarTxt_Click(object sender, RoutedEventArgs e)
         {
-            _timerRemocao = new DispatcherTimer();
-            _timerRemocao.Interval = TimeSpan.FromSeconds(1);
-            _timerRemocao.Tick += (s, e) =>
+            if (string.IsNullOrWhiteSpace(_relatorioTexto))
             {
-                _segundosRestantes--;
-                Title = $"ControlIA - Finalizando processos... Pode remover o pendrive em: {_segundosRestantes}s";
+                MessageBox.Show(
+                    "O relatório ainda não está pronto.",
+                    "ControlIA", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
 
-                if (_segundosRestantes <= 0)
-                {
-                    _timerRemocao.Stop();
-                    Title = "ControlIA - Operação concluída. Pendrive liberado!";
-                    
-                    using (SpeechSynthesizer synth = new SpeechSynthesizer())
-                    {
-                        synth.SpeakAsync("Unidade portátil liberada. Você pode remover o pendrive com segurança.");
-                    }
-                }
+            var dialogo = new SaveFileDialog
+            {
+                Filter = "Texto (*.txt)|*.txt",
+                FileName = $"CIA-sinais-vitais-{DateTime.Now:yyyyMMdd-HHmm}.txt"
             };
-            _timerRemocao.Start();
-        }
 
-        private void BtnExportar_Click(object sender, RoutedEventArgs e)
-        {
-            var saveDialog = new SaveFileDialog
-            {
-                Filter = "Arquivo de Texto (*.txt)|*.txt",
-                FileName = $"Relatorio_ControlIA_{DateTime.Now:yyyyMMdd_HHmm}.txt"
-            };
+            if (dialogo.ShowDialog(this) != true)
+                return;
 
-            if (saveDialog.ShowDialog() == true)
+            try
             {
-                File.WriteAllText(saveDialog.FileName, _relatorioTexto);
-                MessageBox.Show("Relatório salvo com sucesso!", "ControlIA", MessageBoxButton.OK, MessageBoxImage.Information);
+                File.WriteAllText(dialogo.FileName, _relatorioTexto, Encoding.UTF8);
+                MessageBox.Show(
+                    "Relatório salvo.",
+                    "ControlIA", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Não foi possível salvar o arquivo:\n" + ex.Message,
+                    "ControlIA", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
 
-        private async void BtnEnviarNuvem_Click(object sender, RoutedEventArgs e)
+        private void btnVoltar_Click(object sender, RoutedEventArgs e)
         {
-            if (UserSettings.SendTelemetryToCloud)
-            {
-                bool enviado = await ControlIACloudClient.EnviarTelemetriaAsync(_relatorioTexto, UserSettings.NomeTecnico);
-                if (enviado)
-                {
-                    MessageBox.Show("Telemetria enviada para a nuvem!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                else
-                {
-                    MessageBox.Show("Falha ao enviar telemetria.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-            }
+            Close();
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            _fechando = true;
+            _diagnostic.Dispose();
+            base.OnClosed(e);
         }
     }
 }
